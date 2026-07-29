@@ -135,6 +135,8 @@ async def run(args) -> int:
     httpd = start_web(engine, cfg.web.host, cfg.web.port) if cfg.web.enabled else None
 
     print_mapping(cfg, engine)
+    bn = next((s for s in engine.sinks if s.name == "bacnet"), None)
+    bacnet_info = bn.describe() if bn else {}
     ips = local_ips() or ["<ip-de-cette-machine>"]
     print("Accessible depuis le reseau aux adresses :")
     for ip in ips:
@@ -145,13 +147,16 @@ async def run(args) -> int:
         if cfg.s7.enabled:
             print(f"  S7comm      {ip}:{cfg.s7.port}  "
                   f"(rack {cfg.s7.rack}, slot {cfg.s7.slot}, DB{cfg.s7.db_number})")
+        if bacnet_info.get("all_interfaces"):
+            print(f"  BACnet/IP   {ip}:{cfg.bacnet.port} UDP  "
+                  f"(device id {cfg.bacnet.device_id})")
         if cfg.web.enabled:
             print(f"  IHM web     http://{ip}:{cfg.web.port}")
-    if cfg.bacnet.enabled:
-        bn = next((s for s in engine.sinks if s.name == "bacnet"), None)
-        info = bn.describe() if bn else {}
-        print(f"  BACnet/IP   {info.get('host')}:{info.get('port')} UDP "
-              f"(device id {cfg.bacnet.device_id}) — une seule interface")
+    if cfg.bacnet.enabled and not bacnet_info.get("all_interfaces"):
+        print(f"\n  BACnet/IP   {bacnet_info.get('host')}:{bacnet_info.get('port')} UDP "
+              f"(device id {cfg.bacnet.device_id})")
+        print("              une seule interface : mettre bacnet.host a 0.0.0.0 "
+              "pour ecouter partout")
     print("\nCtrl+C pour arreter.\n")
 
     try:

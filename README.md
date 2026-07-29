@@ -248,22 +248,40 @@ le nœud OPC UA, l'objet BACnet et la zone du DB S7 sont créés ou supprimés s
 redémarrer. À la suppression, les zones Modbus et S7 sont remises à zéro pour
 ne pas laisser une valeur fantôme.
 
-> Tant que la configuration n'a pas été enregistrée, une suppression ne vaut
-> que pour la session en cours : un redémarrage restaure les variables du
-> fichier `config.yaml`.
+Les changements sont enregistrés automatiquement (voir ci-dessous), donc ils
+survivent à un redémarrage.
 
 La liste des variables ne tient que dans la table Modbus déclarée
 (`modbus.size`, 2000 par défaut) ; au-delà, l'ajout est refusé avec un message
 explicite.
 
-### Enregistrer
+### Enregistrement automatique
 
-**Enregistrer dans config.yaml** réécrit le fichier avec l'état courant (tags
-ajoutés, tags supprimés, consignes manuelles en cours). L'ancien fichier est
-copié en `config.yaml.bak`.
+Les ajouts, suppressions et consignes manuelles sont **enregistrés
+automatiquement dans `config.yaml`** : l'état survit à un redémarrage du
+simulateur ou du PC, sans rien avoir à cliquer. L'état apparaît dans le
+sous-titre (*enregistré automatiquement*, *enregistrement en cours…*).
 
-> Attention : le fichier réécrit **perd les commentaires** de la version
-> précédente — ils sont conservés dans le `.bak`.
+L'écriture est **différée de 2 secondes** après la dernière modification, pour
+regrouper une rafale de changements en une seule écriture, et **atomique**
+(fichier temporaire puis remplacement) : une coupure de courant en pleine
+écriture ne peut pas laisser un `config.yaml` tronqué.
+
+Ce qui est persisté :
+
+| Élément | Persisté |
+|---|---|
+| Ajout / suppression de variable | oui |
+| Consigne d'un générateur `manual` | oui |
+| Valeur **forcée** sur un autre générateur | non — c'est un écrasement temporaire |
+
+Le bouton **Enregistrer maintenant** force une écriture immédiate. Pour
+désactiver l'automatisme, mettre `autosave: false` en tête de `config.yaml`.
+
+> Le fichier réécrit **perd les commentaires**. La dernière version écrite à la
+> main est conservée dans `config.yaml.bak` — et elle y reste : une fois que
+> `config.yaml` porte l'en-tête du simulateur, le `.bak` n'est plus écrasé,
+> même après plusieurs redémarrages.
 
 ### Config Telegraf complète
 
@@ -325,15 +343,30 @@ passe en **forcé** (affiché en orange) jusqu'à ce qu'on le libère.
 * Le serveur répond aux **Who-Is**, **ReadProperty**, **ReadPropertyMultiple**
   et **WriteProperty** (sur `present-value`, si `writable` est vrai).
 
-Deux limites à connaître :
+### Choix de l'interface réseau
 
-* **BACnet/IP n'écoute que sur une seule interface** (contrairement à Modbus et
-  OPC UA qui écoutent sur toutes). Par défaut le simulateur prend
-  automatiquement la carte réseau principale ; si le PC en a plusieurs,
-  renseigner `bacnet.host` dans `config.yaml` ou passer `--bacnet-host`.
-* Le `prefix_length` (24 par défaut) sert à calculer l'adresse de broadcast des
-  Who-Is : s'il ne correspond pas au masque réel du réseau, la découverte
-  automatique ne marchera pas — les lectures directes, si.
+`bacnet.host` accepte trois formes :
+
+| Valeur | Effet |
+|---|---|
+| `0.0.0.0` (défaut) | écoute sur **toutes** les cartes réseau, VPN compris (Tailscale, WireGuard…), comme Modbus et OPC UA |
+| `auto` | seulement la carte qui porte la route Internet par défaut |
+| une IP | seulement cette carte |
+
+`prefix_length` (24 par défaut) ne sert qu'aux modes `auto` et IP fixe : il
+calcule l'adresse de diffusion pour les Who-Is. Il est ignoré avec `0.0.0.0`.
+
+> `auto` est fragile : si le routage du PC change (Wi-Fi qui bascule sur un
+> autre réseau, VPN qui monte), l'interface choisie change au redémarrage
+> suivant et les clients ne trouvent plus le simulateur. C'est pourquoi le
+> défaut est `0.0.0.0`.
+
+**Découverte et VPN** : un Who-Is en **unicast** (adressé directement à l'IP du
+simulateur) fonctionne partout, y compris à travers Tailscale. Un Who-Is en
+**diffusion** ne traverse pas un VPN maillé — la découverte automatique ne
+marchera donc pas depuis un poste distant, mais les lectures directes oui. Côté
+client, il faut alors renseigner l'IP du simulateur au lieu de compter sur la
+découverte.
 
 **BACnet MS/TP n'est pas géré** : c'est un bus série RS-485, pas de
 l'Ethernet. Il faudrait un adaptateur USB↔RS-485 sur le PC et un câblage
@@ -459,7 +492,8 @@ Analog Value / Binary Value et toute la logique restent identiques.
 |---|---|
 | `pymodbus >= 3.14 est requis` | `python -m pip install --upgrade "pymodbus>=3.14"` — l'API datastore a changé (SimData/SimDevice) |
 | `Impossible de demarrer le serveur modbus` | port 502 déjà utilisé → `--modbus-port 5020` |
-| Le client BACnet ne découvre pas le device | règle pare-feu **UDP** 47808 manquante, `bacnet.host` sur la mauvaise carte réseau, ou `prefix_length` ≠ masque réel |
+| Le client BACnet ne répond pas depuis un autre réseau ou un VPN | `bacnet.host` vaut `auto` ou une IP fixe → mettre `0.0.0.0` pour écouter sur toutes les interfaces |
+| Le client BACnet ne découvre pas le device | règle pare-feu **UDP** 47808 manquante, ou découverte par diffusion à travers un VPN (utiliser l'IP directe) |
 | `device id 599` déjà pris sur le réseau | changer `bacnet.device_id` (il doit être unique) |
 | Le client S7 ne se connecte pas | port 102 déjà pris (un autre logiciel Siemens ?) → `--s7-port`, ou pare-feu TCP 102 |
 | `ISO : Invalid PDU received` côté client S7 | le correctif COTP n'est pas actif — vérifier que `patch_cotp_handshake()` s'exécute bien au démarrage du serveur S7 (§8) |

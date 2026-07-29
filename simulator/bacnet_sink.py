@@ -128,9 +128,19 @@ class BacnetSink(Sink):
     async def start(self, tags: List[Tag]) -> None:
         self._tags = [t for t in tags if t.cfg.bacnet]
 
-        self.host = self.cfg.host
-        if self.host in ("auto", "", "0.0.0.0"):
-            self.host = primary_ip()
+        # 0.0.0.0 : ecoute sur toutes les interfaces, y compris les VPN type
+        # Tailscale. C'est le defaut, aligne sur Modbus et OPC UA.
+        # auto : uniquement la carte qui porte la route par defaut -- pratique
+        # pour n'exposer le BACnet que sur un reseau precis.
+        raw = (self.cfg.host or "").strip().lower()
+        if raw in ("", "0.0.0.0", "all", "toutes"):
+            self.all_interfaces = True
+            self.host = "0.0.0.0"
+            bind = "0.0.0.0/0"
+        else:
+            self.all_interfaces = False
+            self.host = primary_ip() if raw == "auto" else self.cfg.host
+            bind = f"{self.host}/{self.cfg.prefix_length}"
 
         device = DeviceObject(
             objectIdentifier=("device", self.cfg.device_id),
@@ -141,7 +151,7 @@ class BacnetSink(Sink):
             description=self.cfg.description,
         )
         port_object = NetworkPortObject(
-            f"{self.host}/{self.cfg.prefix_length}:{self.cfg.port}",
+            f"{bind}:{self.cfg.port}",
             objectIdentifier=("network-port", 1),
             objectName="NetworkPort-1",
         )
@@ -152,9 +162,10 @@ class BacnetSink(Sink):
         self.app = Application.from_object_list(objects)
 
         log.info(
-            "Serveur BACnet/IP en ecoute sur %s:%s (device %s '%s', %s objets)",
-            self.host, self.cfg.port, self.cfg.device_id, self.cfg.device_name,
-            len(self._tags),
+            "Serveur BACnet/IP en ecoute sur %s:%s%s (device %s '%s', %s objets)",
+            self.host, self.cfg.port,
+            " (toutes les interfaces)" if self.all_interfaces else "",
+            self.cfg.device_id, self.cfg.device_name, len(self._tags),
         )
 
     async def publish(self, tags: List[Tag]) -> None:
@@ -218,6 +229,7 @@ class BacnetSink(Sink):
     def describe(self) -> Dict[str, Any]:
         return {
             "host": self.host,
+            "all_interfaces": getattr(self, "all_interfaces", False),
             "port": self.cfg.port,
             "device_id": self.cfg.device_id,
             "device_name": self.cfg.device_name,

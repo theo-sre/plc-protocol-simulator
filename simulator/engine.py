@@ -160,6 +160,17 @@ class Engine:
         self.cycles = 0
         self._stop = asyncio.Event()
         self._pending: List[tuple] = []   # ('add'|'remove', Tag) a propager aux serveurs
+        self._dirty = False               # une modification attend d'etre enregistree
+        self._dirty_at = 0.0
+        self.last_saved: float = 0.0
+        self.save_error: str = ""
+
+    AUTOSAVE_DELAY = 2.0    # secondes d'inactivite avant d'ecrire sur le disque
+
+    def mark_dirty(self) -> None:
+        """Signale un changement a enregistrer (ecriture differee et groupee)."""
+        self._dirty = True
+        self._dirty_at = time.monotonic()
 
     # -- ajout / suppression de variables ---------------------------------
     def add_tag(self, spec: Dict[str, Any]) -> Dict[str, Any]:
@@ -198,6 +209,7 @@ class Engine:
             self._pending.append(("add", tag))
         log.info("Tag ajoute : %s (%s, %s %s)", name, cfg.dtype,
                  "coil" if cfg.is_bool else "holding", cfg.address)
+        self.mark_dirty()
         return tag.as_dict()
 
     def _check_room(self, cfg: TagConfig) -> None:
@@ -221,6 +233,7 @@ class Engine:
             self.cfg.tags = [c for c in self.cfg.tags if c.name != name]
             self._pending.append(("remove", tag))
         log.info("Tag supprime : %s", name)
+        self.mark_dirty()
         return {"removed": name}
 
     def export_tags(self) -> List[Dict[str, Any]]:
@@ -228,8 +241,16 @@ class Engine:
             return [t.to_spec() for t in self.tags]
 
     def save(self) -> str:
-        """Reecrit config.yaml avec l'etat courant (sauvegarde .bak a cote)."""
+        """Reecrit config.yaml avec l'etat courant.
+
+        Le .bak est gere par save_config : il ne conserve que la derniere
+        version ecrite a la main, et survit donc aux enregistrements
+        automatiques comme aux redemarrages.
+        """
         path = save_config(self.config_path, self.cfg, self.export_tags())
+        self._dirty = False
+        self.last_saved = time.time()
+        self.save_error = ""
         log.info("Configuration enregistree dans %s", path)
         return path
 
@@ -241,8 +262,10 @@ class Engine:
         if tag is None:
             raise KeyError(f"Tag inconnu : {name}")
         value = coerce(tag.cfg.dtype, value)
+        manuel = False
         with self.lock:
             if isinstance(tag.generator, generators.Manual):
+                manuel = tag.generator.value != value
                 tag.generator.set(value)
                 tag.forced = False
                 tag.override = None
@@ -251,6 +274,10 @@ class Engine:
                 tag.forced = force
             tag.value = value
             tag.updated_at = time.time()
+        # Seules les consignes manuelles sont persistees : un forcage est un
+        # ecrasement temporaire, il ne doit pas modifier le fichier.
+        if manuel:
+            self.mark_dirty()
         return tag.as_dict()
 
     def release(self, name: str) -> Dict[str, Any]:
@@ -279,6 +306,10 @@ class Engine:
                 "cycles": self.cycles,
                 "scan_ms": self.cfg.scan_ms,
                 "config_path": self.config_path,
+                "autosave": self.cfg.autosave,
+                "unsaved": self._dirty,
+                "last_saved": self.last_saved,
+                "save_error": self.save_error,
                 "servers": servers,
                 "tags": [t.as_dict() for t in self.tags],
             }
@@ -339,6 +370,17 @@ class Engine:
                     await sink.publish(self.tags)
                 except Exception:
                     log.exception("Erreur de publication sur %s", sink.name)
+
+            # 4) Enregistrement differe : on attend une accalmie pour ecrire une
+            #    seule fois si plusieurs modifications s'enchainent.
+            if (self.cfg.autosave and self._dirty
+                    and time.monotonic() - self._dirty_at >= self.AUTOSAVE_DELAY):
+                try:
+                    self.save()
+                except OSError as exc:
+                    self._dirty = False       # inutile de boucler sur l'echec
+                    self.save_error = str(exc)
+                    log.error("Enregistrement automatique impossible : %s", exc)
 
             next_tick += period
             delay = next_tick - time.monotonic()

@@ -344,7 +344,7 @@ PAGE = """<!doctype html>
           onclick="toggleSelect(false)">Annuler</button>
   <span class="grow"></span>
   <button onclick="window.open('/api/telegraf','_blank')">Config Telegraf</button>
-  <button onclick="saveCfg()">Enregistrer dans config.yaml</button>
+  <button onclick="saveCfg()">Enregistrer maintenant</button>
   <span id="saved" class="sub"></span>
 </div>
 
@@ -552,8 +552,9 @@ function detailHtml(t, srv) {
   let bnBlock = '<dl><dt class="muted">non publie</dt><dd></dd></dl>';
   if (t.bacnet && bn.host) {
     const short = t.bacnet_type === 'binary-value' ? 'BV' : 'AV';
+    const bnHost = (!bn.host || bn.host === '0.0.0.0') ? hostname : bn.host;
     bnBlock = '<dl>'
-      + '<dt>adresse</dt><dd>' + bn.host + ':' + bn.port + ' (UDP)</dd>'
+      + '<dt>adresse</dt><dd>' + bnHost + ':' + bn.port + ' (UDP)</dd>'
       + '<dt>device id</dt><dd>' + bn.device_id + '</dd>'
       + '<dt>objet</dt><dd>' + t.bacnet_type + ',' + t.bacnet_instance
         + ' (' + short + t.bacnet_instance + ')</dd>'
@@ -714,9 +715,15 @@ async function refresh() {
   document.getElementById('dot').classList.remove('ko');
   document.getElementById('status_txt').textContent =
     'en service · ' + duree(s.uptime);
+  let etat;
+  if (s.save_error) etat = '⚠ enregistrement impossible : ' + s.save_error;
+  else if (!s.autosave) etat = 'enregistrement manuel';
+  else if (s.unsaved) etat = 'enregistrement en cours...';
+  else etat = 'enregistre automatiquement';
   document.getElementById('hdr').textContent =
     s.tags.length + ' variables · cycle ' + s.scan_ms + ' ms · '
-    + s.cycles.toLocaleString('fr-FR') + ' cycles · ' + s.config_path;
+    + s.cycles.toLocaleString('fr-FR') + ' cycles · ' + s.config_path
+    + ' · ' + etat;
   renderEndpoints(s.servers || {});
   const sig = s.tags.map(t => t.name + ':' + t.dtype + ':' + t.address + ':'
                             + t.bacnet_instance + ':' + t.s7_offset + ':'
@@ -775,8 +782,9 @@ function updateSelCount() {
 async function deleteSelected() {
   const names = [...selected];
   if (!names.length) { alert('Aucune variable cochee.'); return; }
-  if (!confirm('Supprimer definitivement ' + names.length + ' variable(s) ?\\n\\n'
-               + names.join(', '))) return;
+  if (!confirm('Supprimer ' + names.length + ' variable(s) ?\\n\\n'
+               + names.join(', ')
+               + '\\n\\nLa suppression est enregistree dans config.yaml.')) return;
   const echecs = [];
   for (const n of names) {
     try { await post('/api/remove', {name: n}); open_rows.delete(n); }

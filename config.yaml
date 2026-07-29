@@ -1,21 +1,20 @@
-# =========================================================================
-#  Simulateur de valeurs fictives - configuration
-#  Chaque tag est publie simultanement en Modbus TCP et en OPC UA.
-# =========================================================================
-
-scan_ms: 200            # periode de recalcul des valeurs (millisecondes)
-
+# Configuration du simulateur de valeurs fictives.
+#
+# Fichier reecrit automatiquement des qu'une variable est ajoutee ou supprimee
+# (autosave). Les commentaires de la version precedente sont perdus : la
+# derniere version ecrite a la main est conservee dans config.yaml.bak.
+# La liste complete des generateurs et de leurs parametres est dans README.md.
+scan_ms: 200
+autosave: true
 modbus:
   enabled: true
-  host: 0.0.0.0         # 0.0.0.0 = ecoute sur toutes les cartes reseau
-  port: 502             # 502 = port standard ; mettre 5020 s'il est deja pris
-  unit_id: 1            # slave id / unit id
-  word_order: big       # big = mot de poids fort en premier (standard)
-                        # little = inverse (certains automates Schneider/Wago)
-  mirror_input_registers: true   # les valeurs sont aussi lisibles en FC4
-  mirror_discrete_inputs: true   # les booleens sont aussi lisibles en FC2
-  size: 2000            # taille de la table de registres
-
+  host: 0.0.0.0
+  port: 502
+  unit_id: 1
+  word_order: big
+  mirror_input_registers: true
+  mirror_discrete_inputs: true
+  size: 2000
 opcua:
   enabled: true
   host: 0.0.0.0
@@ -23,207 +22,117 @@ opcua:
   endpoint_path: /freeopcua/server/
   uri: http://datatest.simulator
   server_name: DataTest Simulator
-  folder: Simulation    # nom du dossier contenant les variables
+  folder: Simulation
   allow_anonymous: true
-
 bacnet:
   enabled: true
-  host: auto            # auto = IP de la carte reseau principale.
-                        # BACnet/IP ne peut ecouter que sur UNE interface :
-                        # mettre l'IP voulue si le PC en a plusieurs.
-  prefix_length: 24     # masque du reseau local (24 = 255.255.255.0),
-                        # sert a calculer l'adresse de broadcast des Who-Is
-  port: 47808           # 0xBAC0, port BACnet/IP standard (UDP)
-  device_id: 599        # doit etre unique sur le reseau BACnet
+  host: 0.0.0.0
+  prefix_length: 24
+  port: 47808
+  device_id: 599
   device_name: DataTest-Simulator
   vendor_id: 999
   vendor_name: DataTest
   model_name: Simulateur de valeurs fictives
   description: Generateur de valeurs simulees
-
 s7:
   enabled: true
   host: 0.0.0.0
-  port: 102             # port S7comm standard (ISO-on-TCP / RFC1006)
-  db_number: 1          # numero du bloc de donnees expose
-  size: 1024            # taille du DB en octets
-  bool_bytes: 16        # octets reserves aux booleens en debut de DB
-                        # (16 octets = 128 booleens)
-  rack: 0               # informatif : a reporter dans la config du client
-  slot: 1               # 1 pour S7-1200/1500, 2 pour S7-300/400
-
+  port: 102
+  db_number: 1
+  size: 1024
+  bool_bytes: 16
+  rack: 0
+  slot: 1
 web:
   enabled: true
   host: 0.0.0.0
   port: 8080
-
-# -------------------------------------------------------------------------
-#  TAGS
-#
-#  dtype       : bool | int16 | uint16 | int32 | uint32 | float32 | float64
-#  address     : adresse Modbus (optionnelle, sinon attribuee automatiquement)
-#                -> coil pour les bool, holding register pour le reste
-#  scale       : multiplicateur applique a la valeur brute (ex. 100 pour
-#                transmettre 23.45 degres en entier 2345)
-#  deadband    : variation minimale avant publication (0 = toujours publier)
-#  writable    : autorise un client Modbus/OPC UA/BACnet a ecrire la valeur
-#  modbus/opcua/bacnet/s7 : false pour exclure le tag d'un des protocoles
-#  s7_offset / s7_bit : position imposee dans le DB S7 (sinon attribuee
-#                automatiquement : booleens en bits au debut, numeriques
-#                alignes sur 2 octets ensuite)
-#  bacnet_instance : numero d'instance BACnet impose (sinon attribue dans
-#                l'ordre de declaration : AV1, AV2... pour les valeurs
-#                numeriques, BV1, BV2... pour les booleens)
-#
-#  Generateurs numeriques :
-#    constant   value
-#    manual     value                       (pilote depuis l'IHM / le reseau)
-#    sine       amplitude, offset, period, phase
-#    cosine     idem
-#    triangle   min, max, period
-#    sawtooth   min, max, period
-#    square     min, max, period, duty
-#    ramp       start, rate, min, max, mode: clamp|wrap|bounce
-#    counter    start, step, period, max
-#    random     min, max, period
-#    gaussian   mean, sigma, period
-#    random_walk start, step, min, max
-#    sequence   steps: [{value, duration}, ...], loop
-#    expression expr        (formule Python, voir plus bas)
-#
-#  Generateurs booleens :
-#    toggle     period, duty, invert
-#    pulse      period, width
-#    random_bool probability, period
-#    sequence / manual / constant / expression
-# -------------------------------------------------------------------------
-
 tags:
-
-  # ---- Valeurs analogiques -----------------------------------------------
-  - name: temperature
-    description: Temperature du four (sinusoide autour de 75 degres)
-    dtype: float32
-    unit: "degC"
-    generator: {type: sine, amplitude: 25.0, offset: 75.0, period: 60}
-
-  - name: pression
-    description: Pression procede, bruit gaussien
-    dtype: float32
-    unit: bar
-    generator: {type: gaussian, mean: 4.2, sigma: 0.15, period: 1}
-
-  - name: niveau_cuve
-    description: Remplissage lent puis vidange (triangle)
-    dtype: float32
-    unit: "%"
-    generator: {type: triangle, min: 0, max: 100, period: 120}
-
-  - name: debit
-    description: Marche aleatoire bornee
-    dtype: float32
-    unit: "m3/h"
-    generator: {type: random_walk, start: 50, step: 4, min: 0, max: 100}
-
-  - name: consigne_vitesse
-    description: Consigne pilotee manuellement (IHM ou ecriture Modbus/OPC UA)
-    dtype: float32
-    unit: "tr/min"
-    generator: {type: manual, value: 1500}
-
-  # ---- Valeurs entieres --------------------------------------------------
-  - name: compteur_pieces
-    description: Compteur de production, +1 toutes les 2 s, reboucle a 10000
-    dtype: uint32
-    generator: {type: counter, start: 0, step: 1, period: 2, max: 10000}
-
-  - name: temperature_x100
-    description: Meme temperature transmise en entier (x100), format automate
-    dtype: int16
-    unit: "0.01 degC"
-    scale: 100
-    generator: {type: sine, amplitude: 25.0, offset: 75.0, period: 60}
-
-  - name: rampe_puissance
-    description: Monte en continu de 0 a 1000 puis recommence
-    dtype: uint16
-    unit: kW
-    generator: {type: ramp, start: 0, rate: 25, min: 0, max: 1000, mode: wrap}
-
-  - name: rampe_bornee
-    description: Monte jusqu'a 500 et reste bloquee (mode clamp)
-    dtype: uint16
-    generator: {type: ramp, start: 0, rate: 10, min: 0, max: 500, mode: clamp}
-
-  - name: code_recette
-    description: Suite de paliers (recettes qui s'enchainent)
-    dtype: uint16
-    generator:
-      type: sequence
-      loop: true
-      steps:
-        - {value: 10, duration: 5}
-        - {value: 20, duration: 8}
-        - {value: 30, duration: 3}
-        - {value: 99, duration: 2}
-
-  - name: alea_qualite
-    description: Tirage aleatoire toutes les 3 s
-    dtype: uint16
-    generator: {type: random, min: 0, max: 100, period: 3}
-
-  # ---- Valeur calculee a partir des autres --------------------------------
-  - name: temperature_f
-    description: Temperature convertie en Fahrenheit (formule)
-    dtype: float32
-    unit: "degF"
-    generator: {type: expression, expr: "temperature * 1.8 + 32"}
-
-  # ---- Booleens -----------------------------------------------------------
-  - name: marche_pompe
-    description: Allume 3 s / eteint 3 s
-    dtype: bool
-    generator: {type: toggle, period: 6, duty: 0.5}
-
-  - name: clignotant
-    description: Clignotement rapide (1 Hz)
-    dtype: bool
-    generator: {type: toggle, period: 1, duty: 0.5}
-
-  - name: top_cycle
-    description: Impulsion de 300 ms toutes les 10 s
-    dtype: bool
-    generator: {type: pulse, period: 10, width: 0.3}
-
-  - name: defaut_aleatoire
-    description: Defaut qui apparait dans 10% des cas, evalue toutes les 5 s
-    dtype: bool
-    generator: {type: random_bool, probability: 0.1, period: 5}
-
-  - name: commande_manuelle
-    description: Bouton ON/OFF pilote depuis l'IHM ou par un client
-    dtype: bool
-    generator: {type: manual, value: false}
-
-  - name: alarme_temperature
-    description: Alarme si la temperature depasse 90 degres
-    dtype: bool
-    generator: {type: expression, expr: "temperature > 90"}
-
-  - name: sequence_demarrage
-    description: Cycle ON 4 s / OFF 2 s / ON 1 s / OFF 8 s
-    dtype: bool
-    generator:
-      type: sequence
-      steps:
-        - {value: true,  duration: 4}
-        - {value: false, duration: 2}
-        - {value: true,  duration: 1}
-        - {value: false, duration: 8}
-
-  # ---- Exemple d'adressage impose ----------------------------------------
-  - name: mot_etat
-    description: Adresse Modbus fixee manuellement (holding register 100)
-    dtype: uint16
-    address: 100
-    generator: {type: counter, start: 0, step: 1, period: 1, max: 65535}
+- name: temperature
+  dtype: float32
+  generator:
+    type: sine
+    amplitude: 25.0
+    offset: 75.0
+    period: 60
+  description: Temperature du four (sinusoide autour de 75 degres)
+  unit: degC
+  address: 0
+  bacnet_instance: 1
+  s7_offset: 16
+- name: pression
+  dtype: float32
+  generator:
+    type: gaussian
+    mean: 4.2
+    sigma: 0.15
+    period: 1
+  description: Pression procede, bruit gaussien
+  unit: bar
+  address: 2
+  bacnet_instance: 2
+  s7_offset: 20
+- name: niveau_cuve
+  dtype: float32
+  generator:
+    type: triangle
+    min: 0
+    max: 100
+    period: 120
+  description: Remplissage lent puis vidange (triangle)
+  unit: '%'
+  address: 4
+  bacnet_instance: 3
+  s7_offset: 24
+- name: debit
+  dtype: float32
+  generator:
+    type: random_walk
+    start: 50
+    step: 4
+    min: 0
+    max: 100
+  description: Marche aleatoire bornee
+  unit: m3/h
+  address: 6
+  bacnet_instance: 4
+  s7_offset: 28
+- name: Alarme
+  dtype: bool
+  generator:
+    type: manual
+    value: false
+  address: 0
+  bacnet_instance: 1
+  s7_offset: 0
+  s7_bit: 0
+- name: Alarme_2
+  dtype: bool
+  generator:
+    type: manual
+    value: false
+  address: 1
+  bacnet_instance: 2
+  s7_offset: 0
+  s7_bit: 1
+- name: Compteur
+  dtype: float32
+  generator:
+    type: counter
+    start: 0
+    step: 1
+    period: 1
+    max: 6553500
+  address: 8
+  bacnet_instance: 5
+  s7_offset: 32
+- name: Lot
+  dtype: bool
+  generator:
+    type: manual
+    value: false
+  address: 2
+  bacnet_instance: 3
+  s7_offset: 0
+  s7_bit: 2

@@ -96,8 +96,11 @@ class BacnetConfig:
     """BACnet/IP (UDP). MS/TP n'est pas gere : c'est un bus serie RS-485."""
 
     enabled: bool = True
-    host: str = "auto"          # auto = IP de la carte reseau principale
-    prefix_length: int = 24     # masque du reseau local (24 = 255.255.255.0)
+    host: str = "0.0.0.0"       # 0.0.0.0 = toutes les cartes reseau (VPN compris)
+                                # auto    = seulement la carte principale
+                                # <ip>    = seulement cette carte
+    prefix_length: int = 24     # masque du reseau local (24 = 255.255.255.0),
+                                # ignore quand host vaut 0.0.0.0
     port: int = 47808           # 0xBAC0, port BACnet/IP standard
     device_id: int = 599
     device_name: str = "DataTest-Simulator"
@@ -131,6 +134,8 @@ class WebConfig:
 @dataclass
 class AppConfig:
     scan_ms: int = 200
+    autosave: bool = True       # reecrit config.yaml des qu'une variable change,
+                                # pour que l'etat survive a un redemarrage
     tags: List[TagConfig] = field(default_factory=list)
     modbus: ModbusConfig = field(default_factory=ModbusConfig)
     opcua: OpcuaConfig = field(default_factory=OpcuaConfig)
@@ -258,6 +263,7 @@ def load_config(path: str) -> AppConfig:
 
     cfg = AppConfig(
         scan_ms=int(raw.get("scan_ms", 200)),
+        autosave=bool(raw.get("autosave", True)),
         tags=tags,
         modbus=_section(raw, "modbus", ModbusConfig),
         opcua=_section(raw, "opcua", OpcuaConfig),
@@ -269,25 +275,44 @@ def load_config(path: str) -> AppConfig:
     return cfg
 
 
-HEADER = """\
-# Configuration du simulateur de valeurs fictives.
+MARKER = "# Configuration du simulateur de valeurs fictives."
+
+HEADER = MARKER + """
 #
-# Fichier reecrit par l'IHM web : les commentaires de l'ancienne version ont
-# ete perdus (une sauvegarde .bak est conservee a cote).
+# Fichier reecrit automatiquement des qu'une variable est ajoutee ou supprimee
+# (autosave). Les commentaires de la version precedente sont perdus : la
+# derniere version ecrite a la main est conservee dans config.yaml.bak.
 # La liste complete des generateurs et de leurs parametres est dans README.md.
 """
+
+
+def is_generated(path: str) -> bool:
+    """Le fichier a-t-il deja ete ecrit par le simulateur ?"""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return MARKER in fh.read(len(HEADER) + 128)
+    except OSError:
+        return False
 
 
 def save_config(path: str, cfg: AppConfig, tag_specs: List[Dict[str, Any]]) -> str:
     """Reecrit le fichier YAML a partir de l'etat courant.
 
     ``tag_specs`` est la liste des tags serialises (voir Engine.export_tags).
-    L'ancien fichier est conserve en ``<path>.bak``.
+
+    Le ``.bak`` n'est produit que si le fichier remplace a ete ecrit a la main :
+    une fois qu'il porte l'en-tete du simulateur, il n'y a plus de commentaires
+    a preserver, et la sauvegarde garde donc indefiniment la version d'origine
+    au lieu d'etre ecrasee a chaque enregistrement automatique.
+
+    L'ecriture est atomique (fichier temporaire puis remplacement) : une coupure
+    en cours d'ecriture ne peut pas laisser un config.yaml tronque.
     """
     from dataclasses import asdict
 
     data = {
         "scan_ms": cfg.scan_ms,
+        "autosave": cfg.autosave,
         "modbus": asdict(cfg.modbus),
         "opcua": asdict(cfg.opcua),
         "bacnet": asdict(cfg.bacnet),
@@ -295,12 +320,17 @@ def save_config(path: str, cfg: AppConfig, tag_specs: List[Dict[str, Any]]) -> s
         "web": asdict(cfg.web),
         "tags": tag_specs,
     }
-    if os.path.exists(path):
+    if os.path.exists(path) and not is_generated(path):
         shutil.copyfile(path, path + ".bak")
-    with open(path, "w", encoding="utf-8") as fh:
+
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
         fh.write(HEADER)
         yaml.safe_dump(data, fh, allow_unicode=True, sort_keys=False,
                        default_flow_style=False)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
     return path
 
 
